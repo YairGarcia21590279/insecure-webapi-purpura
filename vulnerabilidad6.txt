@@ -1,0 +1,1 @@
+VULNERABILIDAD 6: Sin Validacion de Extensiones de Archivo

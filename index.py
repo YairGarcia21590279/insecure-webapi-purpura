@@ -1,29 +1,31 @@
 import json
-import random
+import secrets
 import hashlib
 import mysql.connector
 import base64
 import shutil
 import bcrypt
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from bottle import route, run, template, post, request, static_file, default_app
 from dotenv import load_dotenv
 
 # ==========================================
-# VULNERABILIDAD 3 PARCHEADA: Credenciales en texto plano
-# Ahora usa variables de entorno con python-dotenv
+# VULNERABILIDADES PARCHEADAS (PLAN B):
+# 1. IDOR en /Descargar (A01)
+# 2. Validacion de Email (A04)
+# 3. Validacion de Extensiones (A04)
+# 4. Generacion de Token Debil (A02)
 # ==========================================
 
-# Cargar variables de entorno desde .env
 load_dotenv()
 
 
 def loadDatabaseSettings():
 	"""
 	Carga configuración de BD desde variables de entorno
-	en lugar de archivo JSON con credenciales en texto plano
 	"""
 	return {
 		'host': os.getenv('DB_HOST', 'localhost'),
@@ -35,18 +37,11 @@ def loadDatabaseSettings():
 
 
 def getToken():
-	tiempo = datetime.now().timestamp()
-	numero = random.random()
-	cadena = str(tiempo) + str(numero)
-	numero2 = random.random()
-	cadena2 = str(numero)+str(tiempo)+str(numero2)
-	m = hashlib.sha1()
-	m.update(cadena.encode())
-	P = m.hexdigest()
-	m = hashlib.md5()
-	m.update(cadena.encode())
-	Q = m.hexdigest()
-	return f"{P[:20]}{Q[20:]}"
+	"""
+	PARCHE VULNERABILIDAD 4: Token criptográficamente seguro
+	Usa secrets en lugar de random.random()
+	"""
+	return secrets.token_urlsafe(32)
 
 
 @post('/Registro')
@@ -67,6 +62,12 @@ def Registro():
 	if not R:
 		return {"R":-1}
 	
+	# ========== PARCHE VULNERABILIDAD 2: Validacion de Email ==========
+	email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+	if not re.match(email_regex, request.json['email']):
+		return {"R":-1, "error":"Email invalido"}
+	# ===================================================================
+	
 	R = False
 	try:
 		cursor = db.cursor()
@@ -85,7 +86,6 @@ def Registro():
 		cursor.close()
 		db.close()
 	except Exception as e:
-		print(e) 
 		return {"R":-2}
 	
 	return {"R":0,"D":R}
@@ -120,7 +120,6 @@ def Login():
 		R = cursor.fetchall()
 		cursor.close()
 	except Exception as e: 
-		print(e)
 		db.close()
 		return {"R":-2}
 	
@@ -139,11 +138,10 @@ def Login():
 			db.close()
 			return {"R":-3}
 	except Exception as e:
-		print(e)
 		db.close()
 		return {"R":-3}
 	
-	T = getToken()
+	T = getToken()  # Ya usa secrets.token_urlsafe()
 	
 	try:
 		cursor = db.cursor()
@@ -154,7 +152,6 @@ def Login():
 		db.close()
 		return {"R":0,"D":T}
 	except Exception as e:
-		print(e)
 		db.close()
 		return {"R":-4}
 
@@ -175,6 +172,13 @@ def Imagen():
 	if not R:
 		return {"R":-1}
 	
+	# ========== PARCHE VULNERABILIDAD 3: Validacion de Extensiones ==========
+	allowed_extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp']
+	ext = request.json['ext'].lower()
+	if ext not in allowed_extensions:
+		return {"R":-1, "error":"Extension no permitida"}
+	# ========================================================================
+	
 	dbcnf = loadDatabaseSettings()
 	db = mysql.connector.connect(
 		host=dbcnf['host'], 
@@ -193,7 +197,6 @@ def Imagen():
 		R = cursor.fetchall()
 		cursor.close()
 	except Exception as e: 
-		print(e)
 		db.close()
 		return {"R":-2}
 	
@@ -216,7 +219,7 @@ def Imagen():
 		R = cursor.fetchall()
 		idImagen = R[0][0]
 		
-		nueva_ruta = f"img/{idImagen}.{request.json['ext']}"
+		nueva_ruta = f"img/{idImagen}.{ext}"
 		cursor.execute('UPDATE Imagen SET ruta = %s WHERE id = %s', (nueva_ruta, idImagen))
 		
 		db.commit()
@@ -226,7 +229,6 @@ def Imagen():
 		shutil.move(f'tmp/{id_Usuario}', nueva_ruta)
 		return {"R":0,"D":idImagen}
 	except Exception as e: 
-		print(e)
 		db.close()
 		return {"R":-3}
 
@@ -252,34 +254,27 @@ def Descargar():
 	TKN = request.json['token']
 	idImagen = request.json['id']
 	
+	# ========== PARCHE VULNERABILIDAD 1: IDOR - Broken Access Control ==========
+	# Validar que el usuario del token sea el dueño de la imagen usando JOIN
 	R = False
 	try:
 		cursor = db.cursor()
-		cursor.execute('SELECT id_Usuario FROM AccesoToken WHERE token = %s', (TKN,))
-		R = cursor.fetchall()
-		cursor.close()
-	except Exception as e: 
-		print(e)
-		db.close()
-		return {"R":-2}
-	
-	if not R:
-		db.close()
-		return {"R":-2}
-	
-	try:
-		cursor = db.cursor()
-		cursor.execute('SELECT name, ruta FROM Imagen WHERE id = %s', (idImagen,))
+		cursor.execute('''
+			SELECT i.name, i.ruta 
+			FROM Imagen i
+			JOIN AccesoToken at ON i.id_Usuario = at.id_Usuario
+			WHERE i.id = %s AND at.token = %s
+		''', (idImagen, TKN))
 		R = cursor.fetchall()
 		cursor.close()
 		db.close()
 	except Exception as e: 
-		print(e)
 		db.close()
-		return {"R":-3}
+		return {"R":-2}
 	
 	if not R:
-		return {"R":-3}
+		return {"R":-4, "error":"Imagen no encontrada o no tienes permisos"}
+	# ===========================================================================
 	
 	return static_file(R[0][1], Path(".").resolve())
 
