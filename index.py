@@ -4,6 +4,7 @@ import hashlib
 import mysql.connector
 import base64
 import shutil
+import bcrypt
 from datetime import datetime
 from pathlib import Path
 from bottle import route, run, template, post, request, static_file, default_app
@@ -34,7 +35,8 @@ def getToken():
 
 
 # ==========================================
-# VULNERABILIDAD PARCHEADA: SQL INJECTION
+# VULNERABILIDAD 2 PARCHEADA: MD5 -> BCRYPT
+# Ahora usa bcrypt para hashear passwords
 # ==========================================
 
 @post('/Registro')
@@ -57,10 +59,16 @@ def Registro():
 	R = False
 	try:
 		cursor = db.cursor()
-		# PARCHE: Usar prepared statement en vez de concatenación
+		
+		# PARCHE: Usar bcrypt en lugar de MD5
+		password_hash = bcrypt.hashpw(
+			request.json["password"].encode('utf-8'), 
+			bcrypt.gensalt()
+		)
+		
 		cursor.execute(
-			'INSERT INTO Usuario VALUES(null, %s, %s, md5(%s))',
-			(request.json["uname"], request.json["email"], request.json["password"])
+			'INSERT INTO Usuario VALUES(null, %s, %s, %s)',
+			(request.json["uname"], request.json["email"], password_hash)
 		)
 		R = cursor.lastrowid
 		db.commit()
@@ -93,10 +101,11 @@ def Login():
 	R = False
 	try:
 		cursor = db.cursor()
-		# PARCHE: Usar prepared statement
+		
+		# PARCHE: Obtener el hash almacenado para validar con bcrypt
 		cursor.execute(
-			'SELECT id FROM Usuario WHERE uname = %s AND password = md5(%s)',
-			(request.json["uname"], request.json["password"])
+			'SELECT id, password FROM Usuario WHERE uname = %s',
+			(request.json["uname"],)
 		)
 		R = cursor.fetchall()
 		cursor.close()
@@ -109,13 +118,29 @@ def Login():
 		db.close()
 		return {"R":-3}
 	
+	# PARCHE: Validar password con bcrypt.checkpw
+	user_id = R[0][0]
+	stored_hash = R[0][1]
+	
+	# Verificar si stored_hash es bytes o string
+	if isinstance(stored_hash, str):
+		stored_hash = stored_hash.encode('utf-8')
+	
+	try:
+		if not bcrypt.checkpw(request.json["password"].encode('utf-8'), stored_hash):
+			db.close()
+			return {"R":-3}
+	except Exception as e:
+		print(e)
+		db.close()
+		return {"R":-3}
+	
 	T = getToken()
 	
 	try:
 		cursor = db.cursor()
-		# PARCHE: Usar prepared statements
-		cursor.execute('DELETE FROM AccesoToken WHERE id_Usuario = %s', (R[0][0],))
-		cursor.execute('INSERT INTO AccesoToken VALUES(%s, %s, now())', (R[0][0], T))
+		cursor.execute('DELETE FROM AccesoToken WHERE id_Usuario = %s', (user_id,))
+		cursor.execute('INSERT INTO AccesoToken VALUES(%s, %s, now())', (user_id, T))
 		db.commit()
 		cursor.close()
 		db.close()
@@ -155,7 +180,6 @@ def Imagen():
 	R = False
 	try:
 		cursor = db.cursor()
-		# PARCHE: Usar prepared statement
 		cursor.execute('SELECT id_Usuario FROM AccesoToken WHERE token = %s', (TKN,))
 		R = cursor.fetchall()
 		cursor.close()
@@ -175,7 +199,6 @@ def Imagen():
 	
 	try:
 		cursor = db.cursor()
-		# PARCHE: Usar prepared statements
 		cursor.execute(
 			'INSERT INTO Imagen VALUES(null, %s, "img/", %s)',
 			(request.json["name"], id_Usuario)
@@ -223,7 +246,6 @@ def Descargar():
 	R = False
 	try:
 		cursor = db.cursor()
-		# PARCHE: Usar prepared statement
 		cursor.execute('SELECT id_Usuario FROM AccesoToken WHERE token = %s', (TKN,))
 		R = cursor.fetchall()
 		cursor.close()
@@ -238,7 +260,6 @@ def Descargar():
 	
 	try:
 		cursor = db.cursor()
-		# PARCHE: Usar prepared statement
 		cursor.execute('SELECT name, ruta FROM Imagen WHERE id = %s', (idImagen,))
 		R = cursor.fetchall()
 		cursor.close()
