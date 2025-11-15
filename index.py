@@ -5,18 +5,33 @@ import mysql.connector
 import base64
 import shutil
 import bcrypt
+import os
 from datetime import datetime
 from pathlib import Path
 from bottle import route, run, template, post, request, static_file, default_app
+from dotenv import load_dotenv
+
+# ==========================================
+# VULNERABILIDAD 3 PARCHEADA: Credenciales en texto plano
+# Ahora usa variables de entorno con python-dotenv
+# ==========================================
+
+# Cargar variables de entorno desde .env
+load_dotenv()
 
 
-def loadDatabaseSettings(pathjs):
-	pathjs = Path(pathjs)
-	sjson = False
-	if pathjs.exists():
-		with pathjs.open() as data:
-			sjson = json.load(data)
-	return sjson
+def loadDatabaseSettings():
+	"""
+	Carga configuración de BD desde variables de entorno
+	en lugar de archivo JSON con credenciales en texto plano
+	"""
+	return {
+		'host': os.getenv('DB_HOST', 'localhost'),
+		'port': int(os.getenv('DB_PORT', 3306)),
+		'dbname': os.getenv('DB_NAME'),
+		'user': os.getenv('DB_USER'),
+		'password': os.getenv('DB_PASSWORD')
+	}
 
 
 def getToken():
@@ -34,19 +49,15 @@ def getToken():
 	return f"{P[:20]}{Q[20:]}"
 
 
-# ==========================================
-# VULNERABILIDAD 2 PARCHEADA: MD5 -> BCRYPT
-# Ahora usa bcrypt para hashear passwords
-# ==========================================
-
 @post('/Registro')
 def Registro():
-	dbcnf = loadDatabaseSettings('db.json')
+	dbcnf = loadDatabaseSettings()
 	db = mysql.connector.connect(
-		host='localhost', port = dbcnf['port'],
-		database = dbcnf['dbname'],
-		user = dbcnf['user'],
-		password = dbcnf['password']
+		host=dbcnf['host'], 
+		port=dbcnf['port'],
+		database=dbcnf['dbname'],
+		user=dbcnf['user'],
+		password=dbcnf['password']
 	)
 	
 	if not request.json:
@@ -60,7 +71,6 @@ def Registro():
 	try:
 		cursor = db.cursor()
 		
-		# PARCHE: Usar bcrypt en lugar de MD5
 		password_hash = bcrypt.hashpw(
 			request.json["password"].encode('utf-8'), 
 			bcrypt.gensalt()
@@ -83,12 +93,13 @@ def Registro():
 
 @post('/Login')
 def Login():
-	dbcnf = loadDatabaseSettings('db.json')
+	dbcnf = loadDatabaseSettings()
 	db = mysql.connector.connect(
-		host='localhost', port = dbcnf['port'],
-		database = dbcnf['dbname'],
-		user = dbcnf['user'],
-		password = dbcnf['password']
+		host=dbcnf['host'], 
+		port=dbcnf['port'],
+		database=dbcnf['dbname'],
+		user=dbcnf['user'],
+		password=dbcnf['password']
 	)
 	
 	if not request.json:
@@ -102,7 +113,6 @@ def Login():
 	try:
 		cursor = db.cursor()
 		
-		# PARCHE: Obtener el hash almacenado para validar con bcrypt
 		cursor.execute(
 			'SELECT id, password FROM Usuario WHERE uname = %s',
 			(request.json["uname"],)
@@ -118,11 +128,9 @@ def Login():
 		db.close()
 		return {"R":-3}
 	
-	# PARCHE: Validar password con bcrypt.checkpw
 	user_id = R[0][0]
 	stored_hash = R[0][1]
 	
-	# Verificar si stored_hash es bytes o string
 	if isinstance(stored_hash, str):
 		stored_hash = stored_hash.encode('utf-8')
 	
@@ -167,12 +175,13 @@ def Imagen():
 	if not R:
 		return {"R":-1}
 	
-	dbcnf = loadDatabaseSettings('db.json')
+	dbcnf = loadDatabaseSettings()
 	db = mysql.connector.connect(
-		host='localhost', port = dbcnf['port'],
-		database = dbcnf['dbname'],
-		user = dbcnf['user'],
-		password = dbcnf['password']
+		host=dbcnf['host'], 
+		port=dbcnf['port'],
+		database=dbcnf['dbname'],
+		user=dbcnf['user'],
+		password=dbcnf['password']
 	)
 
 	TKN = request.json['token']
@@ -214,7 +223,6 @@ def Imagen():
 		cursor.close()
 		db.close()
 		
-		# Mover archivo a su nueva locacion
 		shutil.move(f'tmp/{id_Usuario}', nueva_ruta)
 		return {"R":0,"D":idImagen}
 	except Exception as e: 
@@ -225,12 +233,13 @@ def Imagen():
 
 @post('/Descargar')
 def Descargar():
-	dbcnf = loadDatabaseSettings('db.json')
+	dbcnf = loadDatabaseSettings()
 	db = mysql.connector.connect(
-		host='localhost', port = dbcnf['port'],
-		database = dbcnf['dbname'],
-		user = dbcnf['user'],
-		password = dbcnf['password']
+		host=dbcnf['host'], 
+		port=dbcnf['port'],
+		database=dbcnf['dbname'],
+		user=dbcnf['user'],
+		password=dbcnf['password']
 	)
 	
 	if not request.json:
